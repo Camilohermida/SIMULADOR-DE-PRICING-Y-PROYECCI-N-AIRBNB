@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calculadora de tarifas Airbnb</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
+
+  <style>
+    html, body { margin: 0; padding: 0; background: #0B0F14; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/plain" id="app-source">
+const { useState, useMemo } = React;
+
+const fmt = (n) =>
+  new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(
+    isFinite(n) ? n : 0
+  );
+const pct = (n) => `${(isFinite(n) ? n : 0).toFixed(1)}%`;
+
+const COLORS = {
+  bg: "#0B0F14",
+  panel: "#12181F",
+  panelAlt: "#182029",
+  line: "#26313D",
+  text: "#E9EDF1",
+  muted: "#8A97A6",
+  teal: "#22C7A9",
+  amber: "#E8A33D",
+  blue: "#5B8DEF",
+  rose: "#E4667E",
+};
+
+function Field({ label, value, onChange, suffix, step = "1" }) {
+  return (
+    <label className="flex items-center justify-between gap-3 py-2.5 border-b" style={{ borderColor: COLORS.line }}>
+      <span className="text-sm" style={{ color: COLORS.muted }}>{label}</span>
+      <span className="flex items-center gap-1">
+        <input
+          type="number"
+          value={value}
+          step={step}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          className="w-28 bg-transparent text-right outline-none focus:bg-white/5 rounded px-1"
+          style={{ color: COLORS.text, fontFamily: "'IBM Plex Mono', monospace" }}
+        />
+        {suffix && <span className="text-xs w-14" style={{ color: COLORS.muted }}>{suffix}</span>}
+      </span>
+    </label>
+  );
+}
+
+function KPI({ label, value, sub, color }) {
+  return (
+    <div className="rounded-lg p-4 flex flex-col gap-1" style={{ background: COLORS.panelAlt, border: `1px solid ${COLORS.line}` }}>
+      <span className="text-[11px] uppercase tracking-wider" style={{ color: COLORS.muted }}>{label}</span>
+      <span className="text-xl" style={{ color: color || COLORS.text, fontFamily: "'IBM Plex Mono', monospace" }}>{value}</span>
+      {sub && <span className="text-xs" style={{ color: COLORS.muted }}>{sub}</span>}
+    </div>
+  );
+}
+
+function App() {
+  const [mode, setMode] = useState("reverse"); // "reverse" = utilidad -> tarifa | "forward" = tarifa -> utilidad
+  const moneda = "COP";
+
+  // Objetivo (según modo)
+  const [utilidadDeseada, setUtilidadDeseada] = useState(1200000);
+  const [tarifaNoche, setTarifaNoche] = useState(180000);
+
+  // Ocupación
+  const [ocupacionPct, setOcupacionPct] = useState(70);
+  const [diasMes, setDiasMes] = useState(30);
+  const [nochesPorReserva, setNochesPorReserva] = useState(3);
+
+  // Comisiones
+  const [airbnbPct, setAirbnbPct] = useState(15.5);
+  const [adminPct, setAdminPct] = useState(20);
+  const [baseAdmin, setBaseAdmin] = useState("trasAirbnbSinAseo"); // "bruto" | "trasAirbnb" | "trasAirbnbSinAseo"
+  const [recargoFinde, setRecargoFinde] = useState(30); // % más caro Vie-Sáb
+
+  // Descuentos y costos
+  const [descuentoSemanal, setDescuentoSemanal] = useState(20);
+  const [descuentoMensual, setDescuentoMensual] = useState(20);
+  const [tarifaAseo, setTarifaAseo] = useState(80000);
+  const [costoVariableReserva, setCostoVariableReserva] = useState(20000);
+  const [gastosFijos, setGastosFijos] = useState(150000);
+
+  const calc = useMemo(() => {
+    const N = (diasMes * ocupacionPct) / 100; // noches ocupadas totales
+    // Distribución semana (Dom-Jue, 5 noches) vs finde (Vie-Sáb, 2 noches), misma ocupación en ambas
+    const N_semana = N * (5 / 7);
+    const N_finde = N * (2 / 7);
+    const m = 1 + recargoFinde / 100; // cuánto más caro es el finde vs. entre semana
+
+    const R = nochesPorReserva > 0 ? N / nochesPorReserva : 0; // reservas
+
+    // Airbnb aplica el descuento según la duración de la estadía promedio:
+    // 28+ noches -> mensual, 7-27 noches -> semanal, menos de 7 -> sin descuento
+    let tierDescuento = "Sin descuento (estadía < 7 noches)";
+    let descuentoPctActivo = 0;
+    if (nochesPorReserva >= 28) {
+      descuentoPctActivo = descuentoMensual;
+      tierDescuento = `Descuento mensual (${pct(descuentoMensual)})`;
+    } else if (nochesPorReserva >= 7) {
+      descuentoPctActivo = descuentoSemanal;
+      tierDescuento = `Descuento semanal (${pct(descuentoSemanal)})`;
+    }
+    const d = descuentoPctActivo / 100;
+    const a = airbnbPct / 100;
+    const b = adminPct / 100;
+
+    const K = N_semana + m * N_finde; // "noches equivalentes" a tarifa entre semana
+    const k = (1 - d) * K;
+    const c = tarifaAseo * R; // ingreso fijo por aseo (1 vez por reserva)
+    const costosVariables = costoVariableReserva * R;
+
+    const factor = baseAdmin === "bruto" ? 1 - a - b : (1 - a) * (1 - b);
+    // El aseo sale por completo del margen del propietario (pasa directo a cubrir la limpieza).
+    // Lo que hay que "reponerle" a la utilidad objetivo depende de si tu comisión ya excluía el aseo o no.
+    const extraAseo = baseAdmin === "trasAirbnbSinAseo" ? c * (1 - b) : c;
+
+    let tarifaSemanaCalc, tarifaSemanaSugerida;
+    if (mode === "reverse") {
+      const denom = factor * k;
+      tarifaSemanaCalc = denom !== 0
+        ? (utilidadDeseada - factor * c + extraAseo + gastosFijos + costosVariables) / denom
+        : 0;
+      tarifaSemanaSugerida = Math.max(0, Math.round(tarifaSemanaCalc / 1000) * 1000);
+    } else {
+      tarifaSemanaCalc = tarifaNoche;
+      tarifaSemanaSugerida = tarifaNoche;
+    }
+    const tarifaFindeSugerida = Math.max(0, Math.round((tarifaSemanaSugerida * m) / 1000) * 1000);
+
+    // Recalcular todo el flujo hacia adelante con las tarifas finales (sugeridas/redondeadas)
+    const tarifaSemanaEfectiva = tarifaSemanaSugerida * (1 - d);
+    const tarifaFindeEfectiva = tarifaFindeSugerida * (1 - d);
+    const ingresoAlojamiento = tarifaSemanaEfectiva * N_semana + tarifaFindeEfectiva * N_finde;
+    const ingresoAseo = c;
+    const ingresoBruto = ingresoAlojamiento + ingresoAseo;
+    const comisionAirbnb = ingresoBruto * a;
+    const trasAirbnb = ingresoBruto - comisionAirbnb;
+    const baseParaAdmin =
+      baseAdmin === "bruto" ? ingresoBruto :
+      baseAdmin === "trasAirbnb" ? trasAirbnb :
+      trasAirbnb - ingresoAseo; // trasAirbnbSinAseo
+    const comisionAdmin = baseParaAdmin * b;
+    const utilidadPropietario = ingresoBruto - comisionAirbnb - comisionAdmin - gastosFijos - costosVariables - ingresoAseo;
+    const tuIngresoPorNoche = N > 0 ? comisionAdmin / N : 0;
+    const valorNetoPorNoche = N > 0 ? utilidadPropietario / N : 0;
+    const tarifaPromedioPonderada = N > 0 ? (tarifaSemanaSugerida * N_semana + tarifaFindeSugerida * N_finde) / N : 0;
+
+    const inviable = factor <= 0 || k <= 0;
+
+    return {
+      N, N_semana, N_finde, R, tarifaSemanaSugerida, tarifaFindeSugerida, tarifaPromedioPonderada,
+      tarifaSemanaEfectiva, tarifaFindeEfectiva, tierDescuento, descuentoPctActivo,
+      ingresoAlojamiento, ingresoAseo, ingresoBruto,
+      comisionAirbnb, comisionAdmin, costosVariables, gastosFijos,
+      utilidadPropietario, tuIngresoPorNoche, valorNetoPorNoche, inviable,
+    };
+  }, [mode, utilidadDeseada, tarifaNoche, ocupacionPct, diasMes, nochesPorReserva, airbnbPct, adminPct, baseAdmin, recargoFinde, descuentoSemanal, descuentoMensual, tarifaAseo, costoVariableReserva, gastosFijos]);
+
+  const segments = [
+    { label: "Utilidad propietario", value: Math.max(calc.utilidadPropietario, 0), color: COLORS.teal },
+    { label: "Tu comisión", value: calc.comisionAdmin, color: COLORS.blue },
+    { label: "Comisión Airbnb", value: calc.comisionAirbnb, color: COLORS.amber },
+    { label: "Gastos + costos", value: gastosFijos + calc.costosVariables, color: COLORS.rose },
+  ];
+  const total = segments.reduce((a, s) => a + s.value, 0) || 1;
+
+  return (
+    <div className="min-h-screen w-full p-6 md:p-10" style={{ background: COLORS.bg, color: COLORS.text, fontFamily: "'Inter', sans-serif" }}>
+      <header className="mb-6 max-w-5xl mx-auto">
+        <p className="text-xs tracking-[0.25em] uppercase" style={{ color: COLORS.teal }}>Ledger · Pricing inverso</p>
+        <h1 className="text-2xl md:text-3xl mt-1" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600 }}>
+          ¿Qué tarifa publico por noche?
+        </h1>
+        <p className="text-sm mt-1" style={{ color: COLORS.muted }}>
+          Define lo que quiere recibir libre el propietario, tus comisiones activas y los descuentos — te decimos la tarifa a publicar.
+        </p>
+
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={() => setMode("reverse")}
+            className="text-xs px-3 py-1.5 rounded-full transition"
+            style={{
+              background: mode === "reverse" ? COLORS.teal : "transparent",
+              color: mode === "reverse" ? "#062A24" : COLORS.muted,
+              border: `1px solid ${mode === "reverse" ? COLORS.teal : COLORS.line}`,
+            }}
+          >
+            Utilidad deseada → tarifa
+          </button>
+          <button
+            onClick={() => setMode("forward")}
+            className="text-xs px-3 py-1.5 rounded-full transition"
+            style={{
+              background: mode === "forward" ? COLORS.teal : "transparent",
+              color: mode === "forward" ? "#062A24" : COLORS.muted,
+              border: `1px solid ${mode === "forward" ? COLORS.teal : COLORS.line}`,
+            }}
+          >
+            Tarifa → utilidad
+          </button>
+        </div>
+      </header>
+
+      <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+        {/* INPUTS */}
+        <div className="lg:col-span-2 lg:sticky lg:top-6 rounded-xl p-5 max-h-[calc(100vh-3rem)] overflow-y-auto" style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}` }}>
+          <h2 className="text-xs uppercase tracking-wider mb-1" style={{ color: COLORS.teal }}>
+            {mode === "reverse" ? "Meta del propietario" : "Tarifa"}
+          </h2>
+          {mode === "reverse" ? (
+            <Field label="Utilidad neta deseada / mes" value={utilidadDeseada} onChange={setUtilidadDeseada} suffix={moneda} step="50000" />
+          ) : (
+            <Field label="Tarifa entre semana (Dom-Jue)" value={tarifaNoche} onChange={setTarifaNoche} suffix={moneda} step="5000" />
+          )}
+          <Field label="Recargo fin de semana (Vie-Sáb)" value={recargoFinde} onChange={setRecargoFinde} suffix="%" step="5" />
+
+          <h2 className="text-xs uppercase tracking-wider mb-1 mt-5" style={{ color: COLORS.muted }}>Ocupación</h2>
+          <Field label="Ocupación promedio mensual" value={ocupacionPct} onChange={setOcupacionPct} suffix="%" step="1" />
+          <Field label="Días del mes" value={diasMes} onChange={setDiasMes} suffix="días" step="1" />
+          <Field label="Noches promedio / reserva" value={nochesPorReserva} onChange={setNochesPorReserva} suffix="noches" step="0.5" />
+
+          <h2 className="text-xs uppercase tracking-wider mb-1 mt-5" style={{ color: COLORS.amber }}>Comisiones</h2>
+          <Field label="Comisión Airbnb" value={airbnbPct} onChange={setAirbnbPct} suffix="%" step="0.1" />
+          <Field label="Tu comisión (admin)" value={adminPct} onChange={setAdminPct} suffix="%" step="0.5" />
+          <div className="flex items-center justify-between py-2.5 border-b" style={{ borderColor: COLORS.line }}>
+            <span className="text-sm" style={{ color: COLORS.muted }}>Tu comisión sobre</span>
+            <select value={baseAdmin} onChange={(e) => setBaseAdmin(e.target.value)} className="bg-transparent text-sm outline-none text-right" style={{ color: COLORS.text }}>
+              <option style={{ color: "#000" }} value="bruto">Ingreso bruto</option>
+              <option style={{ color: "#000" }} value="trasAirbnb">Ingreso tras Airbnb</option>
+              <option style={{ color: "#000" }} value="trasAirbnbSinAseo">Tras Airbnb, sin aseo</option>
+            </select>
+          </div>
+          <Field label="Descuento semanal (7+ noches)" value={descuentoSemanal} onChange={setDescuentoSemanal} suffix="%" step="1" />
+          <Field label="Descuento mensual (28+ noches)" value={descuentoMensual} onChange={setDescuentoMensual} suffix="%" step="1" />
+          <p className="text-[11px] mt-2" style={{ color: COLORS.muted }}>
+            Airbnb aplica el descuento automáticamente según la duración de la reserva. Con {nochesPorReserva} noches promedio por reserva, hoy te aplica: <span style={{ color: COLORS.teal }}>{calc.tierDescuento}</span>.
+          </p>
+
+          <h2 className="text-xs uppercase tracking-wider mb-1 mt-5" style={{ color: COLORS.rose }}>Aseo y costos</h2>
+          <Field label="Tarifa de aseo / reserva" value={tarifaAseo} onChange={setTarifaAseo} suffix={moneda} step="5000" />
+          <Field label="Costo variable / reserva" value={costoVariableReserva} onChange={setCostoVariableReserva} suffix={moneda} step="5000" />
+          <Field label="Gastos fijos / mes" value={gastosFijos} onChange={setGastosFijos} suffix={moneda} step="10000" />
+        </div>
+
+        {/* RESULTADOS - breve, claro */}
+        <div className="lg:col-span-3 flex flex-col gap-5">
+          {calc.inviable ? (
+            <div className="rounded-xl p-5 text-sm" style={{ background: COLORS.panelAlt, border: `1px solid ${COLORS.rose}`, color: COLORS.rose }}>
+              Con estas comisiones y ocupación no es posible cuadrar la cuenta. Revisa que Comisión Airbnb + Tu comisión no superen el 100%, y que ocupación / noches por reserva sean mayores a 0.
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="rounded-xl p-6 text-center" style={{ background: COLORS.panelAlt, border: `1px solid ${COLORS.teal}` }}>
+                  <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.muted }}>Publica entre semana (Dom-Jue)</p>
+                  <p className="text-4xl mt-2" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, color: COLORS.teal }}>
+                    {fmt(calc.tarifaSemanaSugerida)}
+                  </p>
+                  <p className="text-xs mt-2" style={{ color: COLORS.muted }}>
+                    {calc.descuentoPctActivo > 0
+                      ? `Huésped paga ${fmt(calc.tarifaSemanaEfectiva)} ${moneda}/noche con ${calc.tierDescuento}`
+                      : `Huésped paga esto mismo · ${calc.tierDescuento}`}
+                  </p>
+                </div>
+                <div className="rounded-xl p-6 text-center" style={{ background: COLORS.panelAlt, border: `1px solid ${COLORS.blue}` }}>
+                  <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.muted }}>Publica fin de semana (Vie-Sáb)</p>
+                  <p className="text-4xl mt-2" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, color: COLORS.blue }}>
+                    {fmt(calc.tarifaFindeSugerida)}
+                  </p>
+                  <p className="text-xs mt-2" style={{ color: COLORS.muted }}>
+                    {calc.descuentoPctActivo > 0
+                      ? `Huésped paga ${fmt(calc.tarifaFindeEfectiva)} ${moneda}/noche con ${calc.tierDescuento}`
+                      : `Huésped paga esto mismo · ${calc.tierDescuento}`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}` }}>
+                <h2 className="text-xs uppercase tracking-wider mb-3" style={{ color: COLORS.muted }}>De la facturación al margen neto del propietario</h2>
+                <table className="w-full text-sm" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wide" style={{ color: COLORS.muted, fontFamily: "'Inter', sans-serif" }}>
+                      <th className="font-normal pb-2">Concepto</th>
+                      <th className="font-normal pb-2 text-right">Cálculo</th>
+                      <th className="font-normal pb-2 text-right">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ fontFamily: "'Inter', sans-serif", color: COLORS.text }}>Noches entre semana ocupadas</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{diasMes}d × 5/7 × {pct(ocupacionPct)}</td>
+                      <td className="py-2 text-right">{calc.N_semana.toFixed(1)} noches</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.teal, fontFamily: "'Inter', sans-serif" }}>Ingreso entre semana</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>
+                        {calc.N_semana.toFixed(1)} × {fmt(calc.tarifaSemanaSugerida)}{calc.descuentoPctActivo > 0 ? ` × (1−${pct(calc.descuentoPctActivo)})` : ""}
+                      </td>
+                      <td className="py-2 text-right" style={{ color: COLORS.teal }}>{fmt(calc.tarifaSemanaEfectiva * calc.N_semana)}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ fontFamily: "'Inter', sans-serif", color: COLORS.text }}>Noches fin de semana ocupadas</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{diasMes}d × 2/7 × {pct(ocupacionPct)}</td>
+                      <td className="py-2 text-right">{calc.N_finde.toFixed(1)} noches</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.blue, fontFamily: "'Inter', sans-serif" }}>Ingreso fin de semana</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>
+                        {calc.N_finde.toFixed(1)} × {fmt(calc.tarifaFindeSugerida)}{calc.descuentoPctActivo > 0 ? ` × (1−${pct(calc.descuentoPctActivo)})` : ""}
+                      </td>
+                      <td className="py-2 text-right" style={{ color: COLORS.blue }}>{fmt(calc.tarifaFindeEfectiva * calc.N_finde)}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.rose, fontFamily: "'Inter', sans-serif" }}>Aseo (1 vez por reserva)</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{calc.R.toFixed(1)} reservas × {fmt(tarifaAseo)}</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.rose }}>{fmt(calc.ingresoAseo)}</td>
+                    </tr>
+                    <tr className="border-t-2" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ fontFamily: "'Space Grotesk', sans-serif", color: COLORS.text }}>Facturación total (ingreso bruto)</td>
+                      <td className="py-2 text-right"></td>
+                      <td className="py-2 text-right">{fmt(calc.ingresoBruto)}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.amber, fontFamily: "'Inter', sans-serif" }}>(–) Comisión Airbnb</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{pct(airbnbPct)}</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.amber }}>−{fmt(calc.comisionAirbnb)}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.blue, fontFamily: "'Inter', sans-serif" }}>(–) Tu comisión (admin)</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{pct(adminPct)}</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.blue }}>−{fmt(calc.comisionAdmin)}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.rose, fontFamily: "'Inter', sans-serif" }}>(–) Costos variables</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{calc.R.toFixed(1)} reservas × {fmt(costoVariableReserva)}</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.rose }}>−{fmt(calc.costosVariables)}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.rose, fontFamily: "'Inter', sans-serif" }}>(–) Gastos fijos</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}></td>
+                      <td className="py-2 text-right" style={{ color: COLORS.rose }}>−{fmt(gastosFijos)}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.rose, fontFamily: "'Inter', sans-serif" }}>(–) Aseo (pasa directo a limpieza)</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{calc.R.toFixed(1)} reservas × {fmt(tarifaAseo)}</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.rose }}>−{fmt(calc.ingresoAseo)}</td>
+                    </tr>
+                    <tr>
+                      <td colSpan={3} className="pb-2 pt-1 text-[11px]" style={{ color: COLORS.muted, fontFamily: "'Inter', sans-serif" }}>
+                        ↑ Mismo valor del aseo que entró arriba ({fmt(calc.ingresoAseo)}), se descuenta intacto: entra y sale sin dejar utilidad para el propietario. Solo se cobra 1 vez por reserva ({calc.R.toFixed(1)} reservas), nunca por noche — el único costo real que deja es la comisión de Airbnb sobre él, ya incluida arriba.
+                      </td>
+                    </tr>
+                    <tr className="border-t-2" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                      <td className="py-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>= Margen neto del propietario</td>
+                      <td className="py-2 text-right"></td>
+                      <td className="py-2 text-right">{fmt(calc.utilidadPropietario)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="text-[11px] mt-3" style={{ color: COLORS.muted }}>
+                  {calc.N.toFixed(1)} noches ocupadas de {diasMes} días del mes al {pct(ocupacionPct)} de ocupación ({calc.N_semana.toFixed(1)} entre semana + {calc.N_finde.toFixed(1)} finde). El margen neto ya descuenta comisión de Airbnb, tu comisión, costos variables, gastos fijos y el aseo — no se le resta nada más después.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <KPI label="Utilidad propietario" value={fmt(calc.utilidadPropietario)} color={COLORS.teal} sub={`${fmt(calc.valorNetoPorNoche)} / noche`} />
+                <KPI label="Tu comisión" value={fmt(calc.comisionAdmin)} color={COLORS.blue} sub={`${fmt(calc.tuIngresoPorNoche)} / noche`} />
+                <KPI label="Ingreso bruto" value={fmt(calc.ingresoBruto)} sub={`${calc.R.toFixed(1)} reservas/mes`} />
+              </div>
+
+              <div className="rounded-xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}` }}>
+                <div className="w-full h-6 rounded-full overflow-hidden flex" style={{ background: COLORS.panelAlt }}>
+                  {segments.map((s, i) => (
+                    <div key={i} style={{ width: `${(s.value / total) * 100}%`, background: s.color }} title={`${s.label}: ${fmt(s.value)}`} />
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                  {segments.map((s, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: s.color }} />
+                      <span className="text-[11px]" style={{ color: COLORS.muted }}>{s.label} · {pct((s.value / total) * 100)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}` }}>
+                <h2 className="text-xs uppercase tracking-wider mb-3" style={{ color: COLORS.muted }}>Proyección</h2>
+                <table className="w-full text-sm" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wide" style={{ color: COLORS.muted, fontFamily: "'Inter', sans-serif" }}>
+                      <th className="font-normal pb-2">Concepto</th>
+                      <th className="font-normal pb-2 text-right">Mensual</th>
+                      <th className="font-normal pb-2 text-right">Anual</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.muted, fontFamily: "'Inter', sans-serif" }}>Ingreso bruto</td>
+                      <td className="py-2 text-right">{fmt(calc.ingresoBruto)}</td>
+                      <td className="py-2 text-right">{fmt(calc.ingresoBruto * 12)}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.muted, fontFamily: "'Inter', sans-serif" }}>Tu comisión</td>
+                      <td className="py-2 text-right">{fmt(calc.comisionAdmin)}</td>
+                      <td className="py-2 text-right">{fmt(calc.comisionAdmin * 12)}</td>
+                    </tr>
+                    <tr className="border-t-2" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                      <td className="py-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>Utilidad propietario</td>
+                      <td className="py-2 text-right">{fmt(calc.utilidadPropietario)}</td>
+                      <td className="py-2 text-right">{fmt(calc.utilidadPropietario * 12)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="rounded-xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}` }}>
+                <h2 className="text-xs uppercase tracking-wider mb-1" style={{ color: COLORS.muted }}>Tarifa según duración de la estadía</h2>
+                <p className="text-[11px] mb-3" style={{ color: COLORS.muted }}>
+                  El aseo se cobra <span style={{ color: COLORS.rose }}>una sola vez por reserva</span> (no por noche), así que entre más noches se queda el huésped, menos pesa en el precio por noche. Precio/noche = promedio ponderado entre tu tarifa entre semana y de fin de semana.
+                </p>
+                <table className="w-full text-sm" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wide" style={{ color: COLORS.muted, fontFamily: "'Inter', sans-serif" }}>
+                      <th className="font-normal pb-2">Noches</th>
+                      <th className="font-normal pb-2 text-right">Descuento</th>
+                      <th className="font-normal pb-2 text-right">Precio/noche</th>
+                      <th className="font-normal pb-2 text-right">Aseo (único)</th>
+                      <th className="font-normal pb-2 text-right">Total reserva</th>
+                      <th className="font-normal pb-2 text-right">Real/noche</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[1, 2, 3, 4, 5, 6, 7, 10, 14, 21, 28, 30].map((n) => {
+                      const descTier = n >= 28 ? descuentoMensual : n >= 7 ? descuentoSemanal : 0;
+                      const precioNoche = calc.tarifaPromedioPonderada * (1 - descTier / 100);
+                      const totalAlojamiento = precioNoche * n;
+                      const totalReserva = totalAlojamiento + tarifaAseo;
+                      const realPorNoche = totalReserva / n;
+                      const esActual = n === Math.round(nochesPorReserva);
+                      return (
+                        <tr
+                          key={n}
+                          className="border-t"
+                          style={{
+                            borderColor: COLORS.line,
+                            background: esActual ? COLORS.panelAlt : "transparent",
+                            color: esActual ? COLORS.teal : COLORS.text,
+                          }}
+                        >
+                          <td className="py-1.5">{n}</td>
+                          <td className="py-1.5 text-right">{descTier > 0 ? pct(descTier) : "—"}</td>
+                          <td className="py-1.5 text-right">{fmt(precioNoche)}</td>
+                          <td className="py-1.5 text-right">{fmt(tarifaAseo)}</td>
+                          <td className="py-1.5 text-right">{fmt(totalReserva)}</td>
+                          <td className="py-1.5 text-right">{fmt(realPorNoche)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+
+  </script>
+
+  <script>
+    (function () {
+      var source = document.getElementById('app-source').textContent;
+      var output = Babel.transform(source, {
+        presets: [['react', { runtime: 'classic' }]]
+      }).code;
+      var script = document.createElement('script');
+      script.text = output;
+      document.body.appendChild(script);
+    })();
+  </script>
+</body>
+</html>
