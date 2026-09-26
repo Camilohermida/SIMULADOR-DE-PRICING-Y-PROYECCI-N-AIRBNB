@@ -1,4 +1,24 @@
-import React, { useState, useMemo } from "react";
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Calculadora de Rentabilidad Airbnb</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #0B0F14; }
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="month"]::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+    const { useState, useMemo } = React;
+
 
 const fmt = (n) =>
   new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(
@@ -176,7 +196,7 @@ function KPI({ label, value, sub, color }) {
   );
 }
 
-export default function App() {
+function App() {
   const [mode, setMode] = useState("reverse"); // "reverse" = utilidad -> tarifa | "forward" = tarifa -> utilidad
   const moneda = "COP";
 
@@ -758,3 +778,9 @@ export default function App() {
     </div>
   );
 }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+</body>
+</html>
