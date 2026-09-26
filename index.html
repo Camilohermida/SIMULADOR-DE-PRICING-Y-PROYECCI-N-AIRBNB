@@ -1,35 +1,138 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Calculadora de tarifas Airbnb</title>
-
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-
-  <script src="https://cdn.tailwindcss.com"></script>
-
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin></script>
-
-  <style>
-    html, body { margin: 0; padding: 0; background: #0B0F14; }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-
-  <script type="text/plain" id="app-source">
-const { useState, useMemo } = React;
+import React, { useState, useMemo } from "react";
 
 const fmt = (n) =>
   new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(
     isFinite(n) ? n : 0
   );
 const pct = (n) => `${(isFinite(n) ? n : 0).toFixed(1)}%`;
+
+const DIA_LABEL = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+
+// Estadísticas reales del mes/año elegido: cuántos días, y cuántos caen
+// entre semana (Dom-Jue) vs. fin de semana (Vie-Sáb).
+function getMonthStats(mesYYYYMM) {
+  const [y, m] = (mesYYYYMM || "").split("-").map(Number);
+  if (!y || !m) return { diasEnMes: 30, weekdayTotal: 22, weekendTotal: 8 };
+  const diasEnMes = new Date(y, m, 0).getDate();
+  let weekdayTotal = 0,
+    weekendTotal = 0;
+  for (let day = 1; day <= diasEnMes; day++) {
+    const dow = new Date(y, m - 1, day).getDay();
+    if (dow === 5 || dow === 6) weekendTotal++;
+    else weekdayTotal++;
+  }
+  return { diasEnMes, weekdayTotal, weekendTotal };
+}
+
+function dayOfWeek(fechaStr) {
+  if (!fechaStr) return null;
+  return new Date(fechaStr + "T00:00:00").getDay();
+}
+
+const MES_ABBR = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const MES_NOMBRE = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+function formatYMD(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// Domingo de Resurrección (algoritmo de Meeus/Jones/Butcher)
+function computeEasterSunday(year) {
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31); // 3=marzo, 4=abril
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+// Ley Emiliani: si no cae en lunes, se traslada al lunes siguiente
+function moveToMonday(date) {
+  const dow = date.getDay();
+  if (dow === 1) return date;
+  const diff = (8 - dow) % 7;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + diff);
+}
+
+function addDays(date, n) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + n);
+}
+
+// n-ésima ocurrencia de un día de la semana (0=Dom) en un mes (1-12)
+function nthWeekday(year, month, weekday, n) {
+  const first = new Date(year, month - 1, 1);
+  const day = 1 + ((7 + weekday - first.getDay()) % 7) + (n - 1) * 7;
+  return new Date(year, month - 1, day);
+}
+
+// Fechas festivas y comerciales relevantes para hoteles/arriendo corto plazo en Colombia,
+// incluyendo Carnaval de Barranquilla (clave para el mercado de BLÜM GROUP).
+function getFechasComercialesDelAno(year) {
+  const easter = computeEasterSunday(year);
+  const list = [];
+  const push = (date, nombre, tipo) => {
+    const dow = date.getDay();
+    list.push({ fecha: formatYMD(date), nombre, tipo, puente: dow === 1 || dow === 5 });
+  };
+
+  // Festivos fijos (no se mueven)
+  push(new Date(year, 0, 1), "Año Nuevo", "festivo");
+  push(new Date(year, 4, 1), "Día del Trabajo", "festivo");
+  push(new Date(year, 6, 20), "Día de la Independencia", "festivo");
+  push(new Date(year, 7, 7), "Batalla de Boyacá", "festivo");
+  push(new Date(year, 11, 8), "Inmaculada Concepción", "festivo");
+  push(new Date(year, 11, 25), "Navidad", "festivo");
+
+  // Festivos que se trasladan al lunes (Ley Emiliani)
+  push(moveToMonday(new Date(year, 0, 6)), "Reyes Magos", "festivo");
+  push(moveToMonday(new Date(year, 2, 19)), "San José", "festivo");
+  push(moveToMonday(addDays(easter, 39)), "Ascensión del Señor", "festivo");
+  push(moveToMonday(addDays(easter, 60)), "Corpus Christi", "festivo");
+  push(moveToMonday(addDays(easter, 68)), "Sagrado Corazón", "festivo");
+  push(moveToMonday(new Date(year, 5, 29)), "San Pedro y San Pablo", "festivo");
+  push(moveToMonday(new Date(year, 7, 15)), "Asunción de la Virgen", "festivo");
+  push(moveToMonday(new Date(year, 9, 12)), "Día de la Raza", "festivo");
+
+  // Semana de Receso Escolar ("semana de Uribe", Decreto 1373 de 2007): los 5 días
+  // hábiles de la semana inmediatamente anterior al Día de la Raza.
+  {
+    const recesoInicio = addDays(moveToMonday(new Date(year, 9, 12)), -7);
+    for (let i = 0; i < 5; i++) {
+      push(addDays(recesoInicio, i), "Receso escolar (Semana de Uribe)", "comercial");
+    }
+  }
+  push(moveToMonday(new Date(year, 10, 1)), "Todos los Santos", "festivo");
+  push(moveToMonday(new Date(year, 10, 11)), "Independencia de Cartagena", "festivo");
+
+  // Semana Santa (no se mueven, siempre jue-vie)
+  push(addDays(easter, -3), "Jueves Santo", "festivo");
+  push(addDays(easter, -2), "Viernes Santo", "festivo");
+
+  // Carnaval de Barranquilla (4 días antes del Miércoles de Ceniza = Pascua-46)
+  push(addDays(easter, -50), "Sábado de Carnaval", "comercial");
+  push(addDays(easter, -49), "Domingo de Carnaval", "comercial");
+  push(addDays(easter, -48), "Lunes de Carnaval", "comercial");
+  push(addDays(easter, -47), "Martes de Carnaval", "comercial");
+
+  // Fechas comerciales (no festivas, pero de alta demanda/gasto)
+  push(nthWeekday(year, 5, 0, 2), "Día de la Madre", "comercial");
+  push(nthWeekday(year, 6, 0, 3), "Día del Padre", "comercial");
+  push(nthWeekday(year, 9, 6, 3), "Amor y Amistad", "comercial");
+  push(new Date(year, 9, 31), "Halloween", "comercial");
+  push(nthWeekday(year, 11, 5, 4), "Black Friday", "comercial");
+  push(new Date(year, 11, 24), "Nochebuena", "comercial");
+  push(new Date(year, 11, 31), "Fin de Año", "comercial");
+
+  // Propia de Barranquilla
+  push(new Date(year, 3, 7), "Aniversario de Barranquilla", "comercial");
+
+  return list.sort((x, y) => x.fecha.localeCompare(y.fecha));
+}
 
 const COLORS = {
   bg: "#0B0F14",
@@ -73,7 +176,7 @@ function KPI({ label, value, sub, color }) {
   );
 }
 
-function App() {
+export default function App() {
   const [mode, setMode] = useState("reverse"); // "reverse" = utilidad -> tarifa | "forward" = tarifa -> utilidad
   const moneda = "COP";
 
@@ -83,8 +186,31 @@ function App() {
 
   // Ocupación
   const [ocupacionPct, setOcupacionPct] = useState(70);
-  const [diasMes, setDiasMes] = useState(30);
+  const [mesProyeccion, setMesProyeccion] = useState("2026-12"); // mes/año real de la proyección
   const [nochesPorReserva, setNochesPorReserva] = useState(3);
+
+  // Fechas comerciales: noches con tarifa fija propia (Navidad, Año Nuevo, eventos...).
+  // Se venden siempre (100%), se descuentan del pool de días disponibles y no llevan aseo ni costo variable.
+  const [fechasEspeciales, setFechasEspeciales] = useState([
+    { fecha: "2026-12-24", precio: 500000 },
+    { fecha: "2026-12-25", precio: 500000 },
+    { fecha: "2026-12-31", precio: 500000 },
+  ]);
+  const addFechaEspecial = (fecha, precio, nombre) =>
+    setFechasEspeciales([...fechasEspeciales, { fecha: fecha || `${mesProyeccion}-01`, precio: precio || 300000, nombre }]);
+  const updateFechaEspecial = (idx, key, value) =>
+    setFechasEspeciales(fechasEspeciales.map((f, i) => (i === idx ? { ...f, [key]: value } : f)));
+  const removeFechaEspecial = (idx) =>
+    setFechasEspeciales(fechasEspeciales.filter((_, i) => i !== idx));
+
+  const sugerenciasDelMes = useMemo(() => {
+    const year = parseInt((mesProyeccion || "").split("-")[0], 10);
+    if (!year) return [];
+    const yaAgregadas = new Set(fechasEspeciales.map((f) => f.fecha));
+    return getFechasComercialesDelAno(year).filter(
+      (f) => f.fecha.startsWith(mesProyeccion) && !yaAgregadas.has(f.fecha)
+    );
+  }, [mesProyeccion, fechasEspeciales]);
 
   // Comisiones
   const [airbnbPct, setAirbnbPct] = useState(15.5);
@@ -100,13 +226,37 @@ function App() {
   const [gastosFijos, setGastosFijos] = useState(150000);
 
   const calc = useMemo(() => {
-    const N = (diasMes * ocupacionPct) / 100; // noches ocupadas totales
-    // Distribución semana (Dom-Jue, 5 noches) vs finde (Vie-Sáb, 2 noches), misma ocupación en ambas
-    const N_semana = N * (5 / 7);
-    const N_finde = N * (2 / 7);
+    const { diasEnMes, weekdayTotal, weekendTotal } = getMonthStats(mesProyeccion);
+
+    // Fechas comerciales que caen dentro del mes/año seleccionado
+    const fechasDelMes = fechasEspeciales.filter((f) => f.fecha && f.fecha.startsWith(mesProyeccion));
+    let especialWeekday = 0,
+      especialWeekend = 0;
+    fechasDelMes.forEach((f) => {
+      const dow = dayOfWeek(f.fecha);
+      if (dow === 5 || dow === 6) especialWeekend++;
+      else especialWeekday++;
+    });
+    const ingresoEspecial = fechasDelMes.reduce((s, f) => s + (parseFloat(f.precio) || 0), 0);
+
+    // Días disponibles para ocupación regular = total del mes MENOS las fechas comerciales ya vendidas
+    const diasDisponiblesSemana = Math.max(0, weekdayTotal - especialWeekday);
+    const diasDisponiblesFinde = Math.max(0, weekendTotal - especialWeekend);
+    const diasDisponiblesTotal = diasDisponiblesSemana + diasDisponiblesFinde;
+
+    // La ocupación objetivo se calcula sobre el mes COMPLETO, y las noches de fechas
+    // comerciales cuentan para cumplirla. Lo regular solo debe llenar lo que falta.
+    const totalNochesObjetivo = diasEnMes * (ocupacionPct / 100);
+    const nochesComerciales = fechasDelMes.length;
+    const nochesRegularesObjetivo = Math.max(0, totalNochesObjetivo - nochesComerciales);
+    const propSemana = diasDisponiblesTotal > 0 ? diasDisponiblesSemana / diasDisponiblesTotal : 0;
+
+    const N_semana = nochesRegularesObjetivo * propSemana;
+    const N_finde = nochesRegularesObjetivo * (1 - propSemana);
+    const N = N_semana + N_finde; // noches ocupadas totales (regulares, sin contar fechas comerciales)
     const m = 1 + recargoFinde / 100; // cuánto más caro es el finde vs. entre semana
 
-    const R = nochesPorReserva > 0 ? N / nochesPorReserva : 0; // reservas
+    const R = nochesPorReserva > 0 ? N / nochesPorReserva : 0; // reservas regulares (las fechas comerciales no generan aseo/costo variable)
 
     // Airbnb aplica el descuento según la duración de la estadía promedio:
     // 28+ noches -> mensual, 7-27 noches -> semanal, menos de 7 -> sin descuento
@@ -125,19 +275,20 @@ function App() {
 
     const K = N_semana + m * N_finde; // "noches equivalentes" a tarifa entre semana
     const k = (1 - d) * K;
-    const c = tarifaAseo * R; // ingreso fijo por aseo (1 vez por reserva)
+    const c2 = tarifaAseo * R; // ingreso fijo por aseo (1 vez por reserva regular)
+    const c1 = ingresoEspecial; // ingreso fijo por fechas comerciales (no lleva aseo)
     const costosVariables = costoVariableReserva * R;
 
     const factor = baseAdmin === "bruto" ? 1 - a - b : (1 - a) * (1 - b);
     // El aseo sale por completo del margen del propietario (pasa directo a cubrir la limpieza).
     // Lo que hay que "reponerle" a la utilidad objetivo depende de si tu comisión ya excluía el aseo o no.
-    const extraAseo = baseAdmin === "trasAirbnbSinAseo" ? c * (1 - b) : c;
+    const extraAseo = baseAdmin === "trasAirbnbSinAseo" ? c2 * (1 - b) : c2;
 
     let tarifaSemanaCalc, tarifaSemanaSugerida;
     if (mode === "reverse") {
       const denom = factor * k;
       tarifaSemanaCalc = denom !== 0
-        ? (utilidadDeseada - factor * c + extraAseo + gastosFijos + costosVariables) / denom
+        ? (utilidadDeseada - factor * (c1 + c2) + extraAseo + gastosFijos + costosVariables) / denom
         : 0;
       tarifaSemanaSugerida = Math.max(0, Math.round(tarifaSemanaCalc / 1000) * 1000);
     } else {
@@ -150,8 +301,8 @@ function App() {
     const tarifaSemanaEfectiva = tarifaSemanaSugerida * (1 - d);
     const tarifaFindeEfectiva = tarifaFindeSugerida * (1 - d);
     const ingresoAlojamiento = tarifaSemanaEfectiva * N_semana + tarifaFindeEfectiva * N_finde;
-    const ingresoAseo = c;
-    const ingresoBruto = ingresoAlojamiento + ingresoAseo;
+    const ingresoAseo = c2;
+    const ingresoBruto = ingresoAlojamiento + ingresoAseo + ingresoEspecial;
     const comisionAirbnb = ingresoBruto * a;
     const trasAirbnb = ingresoBruto - comisionAirbnb;
     const baseParaAdmin =
@@ -167,13 +318,16 @@ function App() {
     const inviable = factor <= 0 || k <= 0;
 
     return {
+      diasEnMes, weekdayTotal, weekendTotal, diasDisponiblesSemana, diasDisponiblesFinde,
+      diasDisponiblesTotal, propSemana, totalNochesObjetivo, nochesComerciales, nochesRegularesObjetivo,
+      fechasDelMes, ingresoEspecial,
       N, N_semana, N_finde, R, tarifaSemanaSugerida, tarifaFindeSugerida, tarifaPromedioPonderada,
       tarifaSemanaEfectiva, tarifaFindeEfectiva, tierDescuento, descuentoPctActivo,
       ingresoAlojamiento, ingresoAseo, ingresoBruto,
       comisionAirbnb, comisionAdmin, costosVariables, gastosFijos,
       utilidadPropietario, tuIngresoPorNoche, valorNetoPorNoche, inviable,
     };
-  }, [mode, utilidadDeseada, tarifaNoche, ocupacionPct, diasMes, nochesPorReserva, airbnbPct, adminPct, baseAdmin, recargoFinde, descuentoSemanal, descuentoMensual, tarifaAseo, costoVariableReserva, gastosFijos]);
+  }, [mode, utilidadDeseada, tarifaNoche, ocupacionPct, mesProyeccion, fechasEspeciales, nochesPorReserva, airbnbPct, adminPct, baseAdmin, recargoFinde, descuentoSemanal, descuentoMensual, tarifaAseo, costoVariableReserva, gastosFijos]);
 
   const segments = [
     { label: "Utilidad propietario", value: Math.max(calc.utilidadPropietario, 0), color: COLORS.teal },
@@ -185,6 +339,10 @@ function App() {
 
   return (
     <div className="min-h-screen w-full p-6 md:p-10" style={{ background: COLORS.bg, color: COLORS.text, fontFamily: "'Inter', sans-serif" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+      `}</style>
+
       <header className="mb-6 max-w-5xl mx-auto">
         <p className="text-xs tracking-[0.25em] uppercase" style={{ color: COLORS.teal }}>Ledger · Pricing inverso</p>
         <h1 className="text-2xl md:text-3xl mt-1" style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600 }}>
@@ -220,9 +378,9 @@ function App() {
         </div>
       </header>
 
-      <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+      <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* INPUTS */}
-        <div className="lg:col-span-2 lg:sticky lg:top-6 rounded-xl p-5 max-h-[calc(100vh-3rem)] overflow-y-auto" style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}` }}>
+        <div className="lg:col-span-2 rounded-xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}` }}>
           <h2 className="text-xs uppercase tracking-wider mb-1" style={{ color: COLORS.teal }}>
             {mode === "reverse" ? "Meta del propietario" : "Tarifa"}
           </h2>
@@ -235,8 +393,111 @@ function App() {
 
           <h2 className="text-xs uppercase tracking-wider mb-1 mt-5" style={{ color: COLORS.muted }}>Ocupación</h2>
           <Field label="Ocupación promedio mensual" value={ocupacionPct} onChange={setOcupacionPct} suffix="%" step="1" />
-          <Field label="Días del mes" value={diasMes} onChange={setDiasMes} suffix="días" step="1" />
+          <div className="flex items-center justify-between py-2.5 border-b" style={{ borderColor: COLORS.line }}>
+            <span className="text-sm" style={{ color: COLORS.muted }}>Mes y año de la proyección</span>
+            <span className="flex items-center gap-1">
+              <select
+                value={parseInt(mesProyeccion.split("-")[1], 10)}
+                onChange={(e) => setMesProyeccion(`${mesProyeccion.split("-")[0]}-${String(e.target.value).padStart(2, "0")}`)}
+                className="bg-transparent text-sm outline-none"
+                style={{ color: COLORS.text }}
+              >
+                {MES_NOMBRE.map((nombre, i) => (
+                  <option key={i} style={{ color: "#000" }} value={i + 1}>{nombre}</option>
+                ))}
+              </select>
+              <select
+                value={parseInt(mesProyeccion.split("-")[0], 10)}
+                onChange={(e) => setMesProyeccion(`${e.target.value}-${mesProyeccion.split("-")[1]}`)}
+                className="bg-transparent text-sm outline-none"
+                style={{ color: COLORS.text }}
+              >
+                {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - 1 + i).map((y) => (
+                  <option key={y} style={{ color: "#000" }} value={y}>{y}</option>
+                ))}
+              </select>
+            </span>
+          </div>
+          <p className="text-[11px] py-1.5" style={{ color: COLORS.muted }}>
+            {calc.diasEnMes} días · {calc.weekdayTotal} entre semana · {calc.weekendTotal} finde (calendario real de ese mes)
+          </p>
           <Field label="Noches promedio / reserva" value={nochesPorReserva} onChange={setNochesPorReserva} suffix="noches" step="0.5" />
+
+          <h2 className="text-xs uppercase tracking-wider mb-1 mt-5" style={{ color: COLORS.amber }}>Fechas comerciales</h2>
+          <p className="text-[11px] mb-2" style={{ color: COLORS.muted }}>
+            Noches con tarifa propia (festivos, puentes, Carnaval, Navidad...). Se venden siempre, se descuentan del pool de días disponibles y no llevan aseo ni costo variable.
+          </p>
+          {sugerenciasDelMes.length > 0 && (
+            <div className="mb-3">
+              <p className="text-[11px] mb-1.5" style={{ color: COLORS.muted }}>Sugeridas para {mesProyeccion}:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {sugerenciasDelMes.map((s, i) => {
+                  const [, mm, dd] = s.fecha.split("-").map(Number);
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => addFechaEspecial(s.fecha, calc.tarifaFindeSugerida || 300000, s.nombre)}
+                      className="text-[11px] px-2 py-1 rounded-full"
+                      style={{
+                        border: `1px dashed ${s.tipo === "comercial" ? COLORS.amber : COLORS.teal}`,
+                        color: s.tipo === "comercial" ? COLORS.amber : COLORS.teal,
+                      }}
+                      title={s.puente ? "Genera puente (fin de semana largo)" : ""}
+                    >
+                      + {dd} {MES_ABBR[mm - 1]} — {s.nombre}{s.puente ? " (puente)" : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {fechasEspeciales.map((f, idx) => {
+            const dow = dayOfWeek(f.fecha);
+            const fueraDelMes = f.fecha && !f.fecha.startsWith(mesProyeccion);
+            return (
+              <div key={idx} className="flex items-center gap-2 py-1.5 border-b" style={{ borderColor: COLORS.line }}>
+                <input
+                  type="date"
+                  value={f.fecha}
+                  onChange={(e) => updateFechaEspecial(idx, "fecha", e.target.value)}
+                  className="bg-transparent text-xs outline-none"
+                  style={{ color: fueraDelMes ? COLORS.rose : COLORS.text, fontFamily: "'IBM Plex Mono', monospace", colorScheme: "dark" }}
+                />
+                {dow !== null && (
+                  <span className="text-[10px] w-8" style={{ color: dow === 5 || dow === 6 ? COLORS.blue : COLORS.muted }}>
+                    {DIA_LABEL[dow]}
+                  </span>
+                )}
+                {f.nombre && (
+                  <span className="text-[10px] truncate" style={{ color: COLORS.muted, maxWidth: "70px" }} title={f.nombre}>
+                    {f.nombre}
+                  </span>
+                )}
+                <input
+                  type="number"
+                  value={f.precio}
+                  step="10000"
+                  onChange={(e) => updateFechaEspecial(idx, "precio", parseFloat(e.target.value) || 0)}
+                  className="flex-1 bg-transparent text-right text-xs outline-none"
+                  style={{ color: COLORS.text, fontFamily: "'IBM Plex Mono', monospace" }}
+                />
+                <button onClick={() => removeFechaEspecial(idx)} className="text-sm px-1" style={{ color: COLORS.muted }}>×</button>
+              </div>
+            );
+          })}
+          <button
+            onClick={() => addFechaEspecial()}
+            className="text-xs mt-2 px-3 py-1 rounded-full"
+            style={{ border: `1px solid ${COLORS.line}`, color: COLORS.teal }}
+          >
+            + Agregar fecha
+          </button>
+          {fechasEspeciales.some((f) => f.fecha && !f.fecha.startsWith(mesProyeccion)) && (
+            <p className="text-[11px] mt-2" style={{ color: COLORS.rose }}>
+              Hay fechas fuera de {mesProyeccion} — no se están sumando a esta proyección.
+            </p>
+          )}
+
 
           <h2 className="text-xs uppercase tracking-wider mb-1 mt-5" style={{ color: COLORS.amber }}>Comisiones</h2>
           <Field label="Comisión Airbnb" value={airbnbPct} onChange={setAirbnbPct} suffix="%" step="0.1" />
@@ -307,7 +568,7 @@ function App() {
                   <tbody>
                     <tr className="border-t" style={{ borderColor: COLORS.line }}>
                       <td className="py-2" style={{ fontFamily: "'Inter', sans-serif", color: COLORS.text }}>Noches entre semana ocupadas</td>
-                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{diasMes}d × 5/7 × {pct(ocupacionPct)}</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{calc.nochesRegularesObjetivo.toFixed(1)} regulares × {pct(calc.propSemana * 100)}</td>
                       <td className="py-2 text-right">{calc.N_semana.toFixed(1)} noches</td>
                     </tr>
                     <tr className="border-t" style={{ borderColor: COLORS.line }}>
@@ -319,7 +580,7 @@ function App() {
                     </tr>
                     <tr className="border-t" style={{ borderColor: COLORS.line }}>
                       <td className="py-2" style={{ fontFamily: "'Inter', sans-serif", color: COLORS.text }}>Noches fin de semana ocupadas</td>
-                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{diasMes}d × 2/7 × {pct(ocupacionPct)}</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>{calc.nochesRegularesObjetivo.toFixed(1)} regulares × {pct((1 - calc.propSemana) * 100)}</td>
                       <td className="py-2 text-right">{calc.N_finde.toFixed(1)} noches</td>
                     </tr>
                     <tr className="border-t" style={{ borderColor: COLORS.line }}>
@@ -330,7 +591,14 @@ function App() {
                       <td className="py-2 text-right" style={{ color: COLORS.blue }}>{fmt(calc.tarifaFindeEfectiva * calc.N_finde)}</td>
                     </tr>
                     <tr className="border-t" style={{ borderColor: COLORS.line }}>
-                      <td className="py-2" style={{ color: COLORS.rose, fontFamily: "'Inter', sans-serif" }}>Aseo (1 vez por reserva)</td>
+                      <td className="py-2" style={{ color: COLORS.amber, fontFamily: "'Inter', sans-serif" }}>Fechas comerciales ({calc.fechasDelMes.length})</td>
+                      <td className="py-2 text-right" style={{ color: COLORS.muted }}>
+                        {calc.fechasDelMes.length > 0 ? calc.fechasDelMes.map((f) => fmt(f.precio)).join(" + ") : "—"}
+                      </td>
+                      <td className="py-2 text-right" style={{ color: COLORS.amber }}>{fmt(calc.ingresoEspecial)}</td>
+                    </tr>
+                    <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                      <td className="py-2" style={{ color: COLORS.rose, fontFamily: "'Inter', sans-serif" }}>Aseo (1 vez por reserva regular)</td>
                       <td className="py-2 text-right" style={{ color: COLORS.muted }}>{calc.R.toFixed(1)} reservas × {fmt(tarifaAseo)}</td>
                       <td className="py-2 text-right" style={{ color: COLORS.rose }}>{fmt(calc.ingresoAseo)}</td>
                     </tr>
@@ -377,14 +645,19 @@ function App() {
                   </tbody>
                 </table>
                 <p className="text-[11px] mt-3" style={{ color: COLORS.muted }}>
-                  {calc.N.toFixed(1)} noches ocupadas de {diasMes} días del mes al {pct(ocupacionPct)} de ocupación ({calc.N_semana.toFixed(1)} entre semana + {calc.N_finde.toFixed(1)} finde). El margen neto ya descuenta comisión de Airbnb, tu comisión, costos variables, gastos fijos y el aseo — no se le resta nada más después.
+                  {calc.totalNochesObjetivo.toFixed(1)} noches objetivo = {calc.diasEnMes} días del mes ({mesProyeccion}) × {pct(ocupacionPct)} de ocupación = {calc.nochesComerciales} noche(s) de fechas comerciales + {calc.N.toFixed(1)} noches regulares ({calc.N_semana.toFixed(1)} entre semana + {calc.N_finde.toFixed(1)} finde). Las fechas comerciales cuentan para la ocupación, no se suman aparte. El margen neto ya descuenta comisión de Airbnb, tu comisión, costos variables, gastos fijos y el aseo — no se le resta nada más después.
                 </p>
+                {calc.nochesComerciales >= calc.totalNochesObjetivo && (
+                  <p className="text-[11px] mt-2" style={{ color: COLORS.amber }}>
+                    ⚠ Tus fechas comerciales ({calc.nochesComerciales} noches) ya alcanzan o superan la meta de ocupación de este mes ({calc.totalNochesObjetivo.toFixed(1)} noches). No se están proyectando noches regulares adicionales.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <KPI label="Utilidad propietario" value={fmt(calc.utilidadPropietario)} color={COLORS.teal} sub={`${fmt(calc.valorNetoPorNoche)} / noche`} />
                 <KPI label="Tu comisión" value={fmt(calc.comisionAdmin)} color={COLORS.blue} sub={`${fmt(calc.tuIngresoPorNoche)} / noche`} />
-                <KPI label="Ingreso bruto" value={fmt(calc.ingresoBruto)} sub={`${calc.R.toFixed(1)} reservas/mes`} />
+                <KPI label="Ingreso bruto" value={fmt(calc.ingresoBruto)} sub={`${calc.R.toFixed(1)} reservas + ${calc.fechasDelMes.length} fechas comerciales`} />
               </div>
 
               <div className="rounded-xl p-5" style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}` }}>
@@ -485,22 +758,3 @@ function App() {
     </div>
   );
 }
-
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App />);
-
-  </script>
-
-  <script>
-    (function () {
-      var source = document.getElementById('app-source').textContent;
-      var output = Babel.transform(source, {
-        presets: [['react', { runtime: 'classic' }]]
-      }).code;
-      var script = document.createElement('script');
-      script.text = output;
-      document.body.appendChild(script);
-    })();
-  </script>
-</body>
-</html>
